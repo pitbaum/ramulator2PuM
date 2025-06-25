@@ -1,0 +1,16 @@
+/// For debug purposes use when compiling:
+    cd build
+    cmake -DCMAKE_BUILD_TYPE=Debug ..
+    make
+
+// Deleted all non DDR4 files from the make files
+    Since otherwise the states wont match and all other standards are irrelevant
+
+// Still have some remnant files from the deletion
+
+// Addr translation
+    Not using any address translation
+
+// trace read
+    Command (R,W,C,F,M) Address (int)
+    Need to use "path" instead of "traces" for the trace file path in the yaml

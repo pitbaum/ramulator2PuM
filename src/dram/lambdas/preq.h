@@ -2,6 +2,11 @@
 #define RAMULATOR_DRAM_LAMBDAS_PREQ_H
 
 #include <spdlog/spdlog.h>
+#include <vector>
+#include <cstdint>
+
+using AddrVec_t = std::vector<int>;
+using Clk_t = uint64_t;
 
 namespace Ramulator {
 namespace Lambdas {
@@ -23,6 +28,60 @@ int RequireRowOpen(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, C
       spdlog::error("[Preq::Bank] Invalid bank state for an RD/WR command!");
       std::exit(-1);      
     } 
+  }
+};
+
+// Handle all going into PuM state defaults
+template <class T>
+int RequireRowOpenPum(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, Clk_t clk) {
+  switch (node->m_state) {
+    // Issue PuM open command if the state is closed
+    case T::m_states["Closed"]: return T::m_commands["ACTp"];
+    // If a state is already normally opened, PRE to close it
+    case T::m_states["Opened"]: return T::m_commands["PRE"];
+    // If we are refreshing than just take ACTp since it is a form of refreshing
+    case T::m_states["Refreshing"]: return T::m_commands["ACTp"];
+    default: {
+      spdlog::error("[Preq::Bank] Invalid bank state for an RD/WR command!");
+      std::exit(-1);      
+    } 
+  }
+};
+
+template <class T>
+int RequireRC(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, Clk_t clk) {
+  switch (node->m_state) {
+    // Issue the PREv command for Rowclone APA
+    case T::m_states["OpenedPum"]: return T::m_commands["PREv"];
+    // issue the ACTv command for Rowclone APA
+    case T::m_states["RCState"]: return T::m_commands["ACTv"];
+    case T::m_states["Processed"]: return cmd; // finished Rowclone
+    // Need to first get into the OPEN PuM state
+    default: return Ramulator::Lambdas::Preq::Bank::RequireRowOpenPum<T>(node, cmd, addr_vec, clk);
+  }
+};
+
+template <class T>
+int RequireMAJ(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, Clk_t clk) {
+  switch (node->m_state) {
+    // Isssue the PREj command for MAJ APA
+    case T::m_states["OpenedPum"]: return T::m_commands["PREj"];
+    // issue the ACTv command for MAJ APA
+    case T::m_states["MAJState"]: return T::m_commands["ACTv"];
+    case T::m_states["Processed"]: return cmd; // finished MAJ
+    // Need to first get into the OPEN PuM state
+    default: return Ramulator::Lambdas::Preq::Bank::RequireRowOpenPum<T>(node, cmd, addr_vec, clk);
+  }
+};
+
+template <class T>
+int RequireFRAC(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, Clk_t clk) {
+  switch (node->m_state) {
+    // Issue the PREf command for FRAC
+    case T::m_states["OpenedPum"]: return T::m_commands["PREf"];
+    case T::m_states["Processed"]: return cmd; // finished FRAC
+    // Neeed to first get into the OPEN PuM state
+    default: return Ramulator::Lambdas::Preq::Bank::RequireRowOpenPum<T>(node, cmd, addr_vec, clk);
   }
 };
 
@@ -117,6 +176,6 @@ namespace Channel {
 }       // namespace Channel
 }       // namespace Preq
 }       // namespace Lambdas
-};      // namespace Ramulator
+}       // namespace Ramulator
 
 #endif  // RAMULATOR_DRAM_LAMBDAS_PREQ_H

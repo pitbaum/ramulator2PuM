@@ -2,7 +2,8 @@ Frontend:
   impl: ReadWriteTrace
   clock_ratio: 8
   num_expected_insts: 500000
-  path: example_inst.trace
+  traces: 
+    - example_inst.trace
 
   Translation:
     impl: NoTranslation
@@ -20,7 +21,7 @@ MemorySystem:
       channel: 1
       rank: 2
     timing:
-      preset: DDR4_2400R 
+      preset: DDR4_4000
 
   Controller:
     impl: Generic

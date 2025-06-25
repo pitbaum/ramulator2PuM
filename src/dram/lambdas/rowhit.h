@@ -19,6 +19,11 @@ namespace Bank {
           return false;
         }
       case T::m_states["Refreshing"]: return false;
+      // Add Pum states, could add buffer hits for some PuM that is readable at Processend
+      case T::m_states["OpenedPum"]: return false;
+      case T::m_states["RCState"]: return false;
+      case T::m_states["Processed"]: return false;
+      case T::m_states["MAJState"]: return false;
       default: {
         spdlog::error("[RowHit::Bank] Invalid bank state for an RD/WR command!");
         std::exit(-1);      

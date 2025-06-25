@@ -14,7 +14,7 @@ class ReadWriteTrace : public IFrontEnd, public Implementation {
 
   private:
     struct Trace {
-      bool is_write;
+      int request_type_enum;
       AddrVec_t addr_vec;
     };
     std::vector<Trace> m_trace;
@@ -38,8 +38,10 @@ class ReadWriteTrace : public IFrontEnd, public Implementation {
 
     void tick() override {
       const Trace& t = m_trace[m_curr_trace_idx];
-      m_memory_system->send({t.addr_vec, t.is_write ? Request::Type::Write : Request::Type::Read});
-      m_curr_trace_idx = (m_curr_trace_idx + 1) % m_trace_length;
+      // Here we send the request to the front end
+      // Needed to change binary w ? r to the new enum in the request
+      m_memory_system->send({t.addr_vec, t.request_type_enum});
+      m_curr_trace_idx = (m_curr_trace_idx + 1); // They were using % m_trace_length????? that would make infinite loop
     };
 
 
@@ -65,13 +67,26 @@ class ReadWriteTrace : public IFrontEnd, public Implementation {
           throw ConfigurationError("Trace {} format invalid!", file_path_str);
         }
 
-        bool is_write = false; 
-        if (tokens[0] == "R") {
-          is_write = false;
-        } else if (tokens[0] == "W") {
-          is_write = true;
-        } else {
-          throw ConfigurationError("Trace {} format invalid!", file_path_str);
+        // This is where the trace evaluation  is done        bool is_write = false; 
+        int request_type_enum = 0; // Needs to match our request command type enum 
+        switch (tokens[0][0]) {
+          case 'R':
+            request_type_enum = 0;
+            break;
+          case 'W':
+            request_type_enum = 1;
+            break;
+          case 'F':
+            request_type_enum = 2;
+            break;
+          case 'C':
+            request_type_enum = 3;
+            break;
+          case 'M':
+            request_type_enum = 4;
+            break;
+          default:
+            throw ConfigurationError("Trace {} format invalid!", file_path_str);
         }
 
         std::vector<std::string> addr_vec_tokens;
@@ -82,7 +97,7 @@ class ReadWriteTrace : public IFrontEnd, public Implementation {
           addr_vec.push_back(std::stoll(token));
         }
 
-        m_trace.push_back({is_write, addr_vec});
+        m_trace.push_back({request_type_enum, addr_vec});
       }
 
       trace_file.close();
@@ -90,9 +105,9 @@ class ReadWriteTrace : public IFrontEnd, public Implementation {
       m_trace_length = m_trace.size();
     };
 
-    // TODO: FIXME
     bool is_finished() override {
-      return true; 
+      // If our send request traces are as >= the amount of traces we send, the frontend is finished
+      return m_curr_trace_idx >= m_trace_length;
     };    
 };
 

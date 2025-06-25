@@ -19,6 +19,9 @@ struct Request {
     enum : int {
       Read = 0, 
       Write,
+      Fractional,
+      Rowclone,
+      Majority,
     };
   };
 

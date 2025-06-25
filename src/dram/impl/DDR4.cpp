@@ -49,6 +49,8 @@ class DDR4 : public IDRAM, public Implementation {
       {"DDR4_3200W",  {3200,   4,  20,  20,   20,   52,   72,   24,   12,  16,   4,    8,   -1,   -1,    4,    12,  -1,  -1,  -1,   2,    625} },
       {"DDR4_3200AA", {3200,   4,  22,  22,   22,   52,   74,   24,   12,  16,   4,    8,   -1,   -1,    4,    12,  -1,  -1,  -1,   2,    625} },
       {"DDR4_3200AC", {3200,   4,  24,  24,   24,   52,   76,   24,   12,  16,   4,    8,   -1,   -1,    4,    12,  -1,  -1,  -1,   2,    625} },
+       //   name       rate   nBL  nCL  nRCD  nRP   nRAS  nRC   nWR  nRTP nCWL nCCDS nCCDL nRRDS nRRDL nWTRS nWTRL nFAW  nRFC nREFI nCS,  tCK_ps
+      {"DDR4_4000",   {4000,   4,  16,  21,   13,   36,   60,   16,   10,  16,   4,    8,   -1,   -1,    3,    6,    -1,  -1,  -1,   2,   500} },
     };
 
     inline static const std::map<std::string, std::vector<double>> voltage_presets = {
@@ -78,7 +80,8 @@ class DDR4 : public IDRAM, public Implementation {
       "ACT", 
       "PRE", "PREA",
       "RD",  "WR",  "RDA",  "WRA",
-      "REFab", "REFab_end"
+      "REFab", "REFab_end",
+      "RC", "MAJ", "FRAC", "ACTp", "ACTv", "PREv", "PREj", "PREf",
     };
 
     inline static const ImplLUT m_command_scopes = LUT (
@@ -87,6 +90,8 @@ class DDR4 : public IDRAM, public Implementation {
         {"PRE",   "bank"},   {"PREA",   "rank"},
         {"RD",    "column"}, {"WR",     "column"}, {"RDA",   "column"}, {"WRA",   "column"},
         {"REFab", "rank"},  {"REFab_end", "rank"},
+        {"RC",    "bank"}, {"MAJ", "bank"}, {"FRAC", "bank"},
+        {"ACTp", "row"}, {"ACTv",  "row"}, {"PREv", "bank"}, {"PREj", "bank"}, {"PREf", "bank"}, 
       }
     );
 
@@ -102,17 +107,27 @@ class DDR4 : public IDRAM, public Implementation {
         {"WRA",       {false,  true,    true,    false}},
         {"REFab",     {false,  false,   false,   true }},
         {"REFab_end", {false,  true,    false,   false}},
+        {"RC",        {false,  true,    false,   false}}, // Put all the PuM stuff to false, because it will affect scheduling with hits (we dont want hits)
+        {"MAJ",       {false,  true,    false,   false}},
+        {"FRAC",      {false,  true,    false,   false}},
+        {"ACTp",      {false,  true,   false,   false}},
+        {"ACTv",      {false,  true,   false,   false}},
+        {"PREv",      {false,  true,    false,   false}},
+        {"PREj",      {false,  true,    false,   false}},
+        {"PREf",      {false,  true,    false,   false}},
       }
     );
 
     inline static constexpr ImplDef m_requests = {
-      "read", "write", "all-bank-refresh", "open-row", "close-row"
+      "read", "write", "all-bank-refresh", "open-row", "close-row", "rowclone", "majority", "fractional",
     };
 
+    // Might need to add the other sub PuM commands too
     inline static const ImplLUT m_request_translations = LUT (
       m_requests, m_commands, {
         {"read", "RD"}, {"write", "WR"}, {"all-bank-refresh", "REFab"},
-        {"open-row", "ACT"}, {"close-row", "PRE"}
+        {"open-row", "ACT"}, {"close-row", "PRE"}, {"rowclone", "RC"}, 
+        {"majority", "MAJ"}, {"fractional", "FRAC"},
       }
     );
 
@@ -153,7 +168,7 @@ class DDR4 : public IDRAM, public Implementation {
    *                 Node States
    ***********************************************/
     inline static constexpr ImplDef m_states = {
-       "Opened", "Closed", "PowerUp", "N/A", "Refreshing"
+       "Opened", "Closed", "PowerUp", "N/A", "Refreshing", "OpenedPum", "RCState", "MAJState", "Processed"
     };
 
     inline static const ImplLUT m_init_states = LUT (
@@ -355,29 +370,30 @@ class DDR4 : public IDRAM, public Implementation {
           case 2666:  return 4;
           case 2933:  return 5;
           case 3200:  return 6;
+          case 4000:  return 7;
           default:    return -1;
         }
       }(m_timing_vals("rate"));
 
       // Tables for secondary timings determined by the frequency, density, and DQ width.
       // Defined in the JEDEC standard (e.g., Table 169-170, JESD79-4C).
-      constexpr int nRRDS_TABLE[3][7] = {
-      // 1600  1866  2133  2400  2666  2933  3200
-        { 4,    4,    4,    4,    4,    4,    4},   // x4
-        { 4,    4,    4,    4,    4,    4,    4},   // x8
-        { 5,    5,    6,    7,    8,    8,    9},   // x16
+      constexpr int nRRDS_TABLE[3][8] = {
+      // 1600  1866  2133  2400  2666  2933  3200  4000
+        { 4,    4,    4,    4,    4,    4,    4,    4},   // x4
+        { 4,    4,    4,    4,    4,    4,    4,    4},   // x8
+        { 5,    5,    6,    7,    8,    8,    9,    9},   // x16
       };
-      constexpr int nRRDL_TABLE[3][7] = {
-      // 1600  1866  2133  2400  2666  2933  3200
-        { 5,    5,    6,    6,    7,    8,    8 },  // x4
-        { 5,    5,    6,    6,    7,    8,    8 },  // x8
-        { 6,    6,    7,    8,    9,    10,   11},  // x16
+      constexpr int nRRDL_TABLE[3][8] = {
+      // 1600  1866  2133  2400  2666  2933  3200  4000
+        { 5,    5,    6,    6,    7,    8,    8,     8},  // x4
+        { 5,    5,    6,    6,    7,    8,    8,     8},  // x8
+        { 6,    6,    7,    8,    9,    10,   11,   11},  // x16
       };
-      constexpr int nFAW_TABLE[3][7] = {
-      // 1600  1866  2133  2400  2666  2933  3200
-        { 16,   16,   16,   16,   16,   16,   16},  // x4
-        { 20,   22,   23,   26,   28,   31,   34},  // x8
-        { 28,   28,   32,   36,   40,   44,   48},  // x16
+      constexpr int nFAW_TABLE[3][8] = {
+      // 1600  1866  2133  2400  2666  2933  3200   4000
+        { 16,   16,   16,   16,   16,   16,   16,   16},  // x4
+        { 20,   22,   23,   26,   28,   31,   34,   34},  // x8
+        { 28,   28,   32,   36,   40,   44,   48,   48},  // x16
       };
 
       if (dq_id != -1 && rate_id != -1) {
@@ -440,53 +456,95 @@ class DDR4 : public IDRAM, public Implementation {
           /*** Channel ***/ 
           // CAS <-> CAS
           /// Data bus occupancy
+          // No need for PuM commands, since no data bus occupancy
           {.level = "channel", .preceding = {"RD", "RDA"}, .following = {"RD", "RDA"}, .latency = V("nBL")},
           {.level = "channel", .preceding = {"WR", "WRA"}, .following = {"WR", "WRA"}, .latency = V("nBL")},
 
           /*** Rank (or different BankGroup) ***/ 
           // CAS <-> CAS
-          /// nCCDS is the minimal latency for column commands 
+          /// nCCDS is the minimal latency for column commands
+          //// No PuM column commands latency since there is no specific column targeted for PuM
           {.level = "rank", .preceding = {"RD", "RDA"}, .following = {"RD", "RDA"}, .latency = V("nCCDS")},
           {.level = "rank", .preceding = {"WR", "WRA"}, .following = {"WR", "WRA"}, .latency = V("nCCDS")},
-          /// RD <-> WR, Minimum Read to Write, Assuming tWPRE = 1 tCK                          
+          /// RD <-> WR, Minimum Read to Write, Assuming tWPRE = 1 tCK
+          //// No difference for PuM commands, since we dont need to add switching time                          
           {.level = "rank", .preceding = {"RD", "RDA"}, .following = {"WR", "WRA"}, .latency = V("nCL") + V("nBL") + 2 - V("nCWL")},
           /// WR <-> RD, Minimum Read after Write
           {.level = "rank", .preceding = {"WR", "WRA"}, .following = {"RD", "RDA"}, .latency = V("nCWL") + V("nBL") + V("nWTRS")},
           /// CAS <-> CAS between sibling ranks, nCS (rank switching) is needed for new DQS
           {.level = "rank", .preceding = {"RD", "RDA"}, .following = {"RD", "RDA", "WR", "WRA"}, .latency = V("nBL") + V("nCS"), .is_sibling = true},
           {.level = "rank", .preceding = {"WR", "WRA"}, .following = {"RD", "RDA"}, .latency = V("nCL")  + V("nBL") + V("nCS") - V("nCWL"), .is_sibling = true},
+          // Need rank switching time for PuM but dont need the burst length
+          {.level = "rank", .preceding = {"FRAC", "MAJ", "RC"}, .following = {"RD", "RDA", "WR", "WRA", "FRAC", "MAJ", "RC"}, .latency = V("nCS"), .is_sibling = true},
+          {.level = "rank", .preceding = {"RD", "RDA", "WR", "WRA"}, .following = {"FRAC", "MAJ", "RC"}, .latency = V("nCS"), .is_sibling = true},
           /// CAS <-> PREab
+          // No additional time all PuM already ends in PRE
           {.level = "rank", .preceding = {"RD"}, .following = {"PREA"}, .latency = V("nRTP")},
-          {.level = "rank", .preceding = {"WR"}, .following = {"PREA"}, .latency = V("nCWL") + V("nBL") + V("nWR")},          
+          {.level = "rank", .preceding = {"WR"}, .following = {"PREA"}, .latency = V("nCWL") + V("nBL") + V("nWR")},         
+          {.level = "rank", .preceding = {"FRAC", "RC", "MAJ"}, .following = {"PREA"}, .latency = 1},
+
           /// RAS <-> RAS
-          {.level = "rank", .preceding = {"ACT"}, .following = {"ACT"}, .latency = V("nRRDS")},          
+          {.level = "rank", .preceding = {"ACT"}, .following = {"ACT", "ACTp"}, .latency = V("nRRDS")},  //-1 for ddr4 which is better preset than ramulator1         
           {.level = "rank", .preceding = {"ACT"}, .following = {"ACT"}, .latency = V("nFAW"), .window = 4},          
           {.level = "rank", .preceding = {"ACT"}, .following = {"PREA"}, .latency = V("nRAS")},          
-          {.level = "rank", .preceding = {"PREA"}, .following = {"ACT"}, .latency = V("nRP")},          
+          {.level = "rank", .preceding = {"PREA"}, .following = {"ACT", "ACTp"}, .latency = V("nRP")},
+          {.level = "rank", .preceding = {"ACTp"}, .following = {"ACT"}, .latency = V("nRRDS")},  //-1 for ddr4 which is better preset than ramulator1         
+
           /// RAS <-> REF
           {.level = "rank", .preceding = {"ACT"}, .following = {"REFab"}, .latency = V("nRC")},          
           {.level = "rank", .preceding = {"PRE", "PREA"}, .following = {"REFab"}, .latency = V("nRP")},          
           {.level = "rank", .preceding = {"RDA"}, .following = {"REFab"}, .latency = V("nRP") + V("nRTP")},          
           {.level = "rank", .preceding = {"WRA"}, .following = {"REFab"}, .latency = V("nCWL") + V("nBL") + V("nWR") + V("nRP")},          
           {.level = "rank", .preceding = {"REFab"}, .following = {"ACT", "PREA"}, .latency = V("nRFC")},          
-
+          // Using the nRC timing, since all PuM commands are faster than it anyways
+          {.level = "rank", .preceding = {"ACTp"}, .following = {"REFab"}, .latency = V("nRC")},          
+          
           /*** Same Bank Group ***/ 
           /// CAS <-> CAS
-          {.level = "bankgroup", .preceding = {"RD", "RDA"}, .following = {"RD", "RDA"}, .latency = V("nCCDL")},          
-          {.level = "bankgroup", .preceding = {"WR", "WRA"}, .following = {"WR", "WRA"}, .latency = V("nCCDL")},          
+          {.level = "bankgroup", .preceding = {"RD", "RDA"}, .following = {"RD", "RDA", "MAJ", "FRAC", "RC"}, .latency = V("nCCDL")},          
+          {.level = "bankgroup", .preceding = {"WR", "WRA"}, .following = {"WR", "WRA", "MAJ", "FRAC", "RC"}, .latency = V("nCCDL")},          
           {.level = "bankgroup", .preceding = {"WR", "WRA"}, .following = {"RD", "RDA"}, .latency = V("nCWL") + V("nBL") + V("nWTRL")},
+          {.level = "bankgroup", .preceding = {"MAJ", "FRAC", "RC"}, .following = {"RD", "RDA", "WR", "WRA"}, .latency = V("nCCDL")},          
+          
           /// RAS <-> RAS
-          {.level = "bankgroup", .preceding = {"ACT"}, .following = {"ACT"}, .latency = V("nRRDL")},  
+          {.level = "bankgroup", .preceding = {"ACT"}, .following = {"ACT", "ACTp"}, .latency = V("nRRDL")}, 
+          {.level = "bankgroup", .preceding = {"ACTp"}, .following = {"ACT", "ACTp"}, .latency = V("nRRDL")},  
 
           /*** Bank ***/ 
-          {.level = "bank", .preceding = {"ACT"}, .following = {"ACT"}, .latency = V("nRC")},  
+          {.level = "bank", .preceding = {"ACT"}, .following = {"ACT"}, .latency = V("nRC")},
           {.level = "bank", .preceding = {"ACT"}, .following = {"RD", "RDA", "WR", "WRA"}, .latency = V("nRCD")},  
           {.level = "bank", .preceding = {"ACT"}, .following = {"PRE"}, .latency = V("nRAS")},  
           {.level = "bank", .preceding = {"PRE"}, .following = {"ACT"}, .latency = V("nRP")},  
           {.level = "bank", .preceding = {"RD"},  .following = {"PRE"}, .latency = V("nRTP")},  
           {.level = "bank", .preceding = {"WR"},  .following = {"PRE"}, .latency = V("nCWL") + V("nBL") + V("nWR")},  
           {.level = "bank", .preceding = {"RDA"}, .following = {"ACT"}, .latency = V("nRTP") + V("nRP")},  
-          {.level = "bank", .preceding = {"WRA"}, .following = {"ACT"}, .latency = V("nCWL") + V("nBL") + V("nWR") + V("nRP")},  
+          {.level = "bank", .preceding = {"WRA"}, .following = {"ACT"}, .latency = V("nCWL") + V("nBL") + V("nWR") + V("nRP")},
+          
+          // Additional delays for PuM
+          /// Since all PuM commands have been implemented to be complete in themselves, everything can be issued after they are done
+          /// They are done after the main timings have passed (See below PuM main timings)
+          {.level = "bank", .preceding = {"RC"}, .following = {"RD", "WR", "ACT", "PRE", "WRA", "RDA", "WR", "FRAC", "MAJ", "RC"}, .latency = V("nRAS") + 6 + V("nRP")},
+          {.level = "bank", .preceding = {"MAJ"}, .following = {"RD", "WR", "ACT", "PRE", "WRA", "RDA", "WR", "FRAC", "RC", "MAJ"}, .latency = 3 + 6 + V("nRP")},
+          {.level = "bank", .preceding = {"FRAC"}, .following = {"RD", "WR", "ACT", "PRE", "WRA", "RDA", "WR", "RC", "MAJ", "FRAC"}, .latency = 1 + V("nRP")},
+
+          // PuM main timings
+          /// ROWCLONE:   ACT tRAS -> PREv 3ns -> ACTv tRP-> RC (Need to manually issue a PRE after)
+          /// MAJORITY:   ACT 1.5ns -> PREj 3ns -> ACTv tRP -> MAJ (Back in closed state again)
+          /// FRACTIONAL: ACT 1 cylce -> PREf tRP -> FRAC (Back in closed state again)
+          
+          // Rowclone Command timings
+          {.level = "bank", .preceding = {"ACTp"}, .following = {"PREv"}, .latency = V("nRAS")},
+          {.level = "bank", .preceding = {"PREv"}, .following = {"ACTv"}, .latency = 6},
+          {.level = "bank", .preceding = {"ACTv"}, .following = {"RC"}, .latency = V("nRP")},
+          
+          // MAJORITY Command timings
+          {.level = "bank", .preceding = {"ACTp"}, .following = {"PREj"}, .latency = 3},
+          {.level = "bank", .preceding = {"PREj"}, .following = {"ACTv"}, .latency = 6},
+          {.level = "bank", .preceding = {"ACTv"}, .following = {"MAJ"}, .latency = V("nRP")},
+
+          // FRAC Command timings
+          {.level = "bank", .preceding = {"ACTp"}, .following = {"PREf"}, .latency = 1},
+          {.level = "bank", .preceding = {"PREf"}, .following = {"FRAC"}, .latency = V("nRP")},
         }
       );
       #undef V
@@ -506,6 +564,12 @@ class DDR4 : public IDRAM, public Implementation {
       m_actions[m_levels["bank"]][m_commands["PRE"]] = Lambdas::Action::Bank::PRE<DDR4>;
       m_actions[m_levels["bank"]][m_commands["RDA"]] = Lambdas::Action::Bank::PRE<DDR4>;
       m_actions[m_levels["bank"]][m_commands["WRA"]] = Lambdas::Action::Bank::PRE<DDR4>;
+      // Add PuM bank actions
+      m_actions[m_levels["bank"]][m_commands["ACTp"]] = Lambdas::Action::Bank::ACTp<DDR4>;
+      m_actions[m_levels["bank"]][m_commands["ACTv"]] = Lambdas::Action::Bank::ACTv<DDR4>;
+      m_actions[m_levels["bank"]][m_commands["PREv"]] = Lambdas::Action::Bank::PREv<DDR4>;
+      m_actions[m_levels["bank"]][m_commands["PREj"]] = Lambdas::Action::Bank::PREj<DDR4>;
+      m_actions[m_levels["bank"]][m_commands["PREf"]] = Lambdas::Action::Bank::PREf<DDR4>;
     };
 
     void set_preqs() {
@@ -519,6 +583,10 @@ class DDR4 : public IDRAM, public Implementation {
       m_preqs[m_levels["bank"]][m_commands["WR"]] = Lambdas::Preq::Bank::RequireRowOpen<DDR4>;
       m_preqs[m_levels["bank"]][m_commands["ACT"]] = Lambdas::Preq::Bank::RequireRowOpen<DDR4>;
       m_preqs[m_levels["bank"]][m_commands["PRE"]] = Lambdas::Preq::Bank::RequireBankClosed<DDR4>;
+      // Add PuM Bank requirements (State machine logic)
+      m_preqs[m_levels["bank"]][m_commands["RC"]] = Lambdas::Preq::Bank::RequireRC<DDR4>;
+      m_preqs[m_levels["bank"]][m_commands["MAJ"]] = Lambdas::Preq::Bank::RequireMAJ<DDR4>;
+      m_preqs[m_levels["bank"]][m_commands["FRAC"]] = Lambdas::Preq::Bank::RequireFRAC<DDR4>;
     };
 
     void set_rowhits() {

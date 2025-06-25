@@ -25,6 +25,58 @@ namespace Bank {
     node->m_row_state.clear();
   };
 
+  // Closed ----> OpenedPum
+  template <class T>
+  void ACTp(typename T::Node* node, int cmd, int target_id, Clk_t clk) {
+    node->m_state = T::m_states["OpenedPum"];
+    node->m_row_state[target_id] = T::m_states["OpenedPum"];
+  };
+
+  // For RC: Closed, OpenedPum, RCState, Processed, Closed
+  template <class T>
+  void PREv(typename T::Node* node, int cmd, int target_id, Clk_t clk) {
+    node->m_state = T::m_states["RCState"];
+    node->m_row_state[target_id] = T::m_states["RCState"];
+  };
+  
+  template <class T>
+  void ACTv(typename T::Node* node, int cmd, int target_id, Clk_t clk) {
+    node->m_state = T::m_states["Processed"];
+    node->m_row_state[target_id] = T::m_states["Processed"];
+  };
+
+  template <class T>
+  void RC(typename T::Node* node, int cmd, int target_id, Clk_t clk) {
+    node->m_state = T::m_states["Closed"];
+    node->m_row_state.clear();
+  };
+
+  // For MAJ: Closed, OpenedPum, MAJState, Processed, Closed
+  template <class T>
+  void PREj(typename T::Node* node, int cmd, int target_id, Clk_t clk) {
+    node->m_state = T::m_states["MAJState"];
+    node->m_row_state[target_id] = T::m_states["MAJState"];
+  };
+
+  template <class T>
+  void MAJ(typename T::Node* node, int cmd, int target_id, Clk_t clk) {
+    node->m_state = T::m_states["Closed"];
+    node->m_row_state.clear();
+  };
+
+  // For FRAC: Closed, OpenedPum, Processedm Closed
+  template <class T>
+  void PREf(typename T::Node* node, int cmd, int target_id, Clk_t clk) {
+    node->m_state = T::m_states["Processed"];
+    node->m_row_state[target_id] = T::m_states["Processed"];
+  };
+
+  template <class T>
+  void FRAC(typename T::Node* node, int cmd, int target_id, Clk_t clk) {
+    node->m_state = T::m_states["Closed"];
+    node->m_row_state.clear();
+  };
+
   template <class T>
   void VRR(typename T::Node* node, int cmd, int target_id, Clk_t clk) {
     node->m_state = T::m_states["Refreshing"];

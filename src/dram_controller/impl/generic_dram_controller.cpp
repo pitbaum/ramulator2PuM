@@ -12,7 +12,11 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
     ReqBuffer m_priority_buffer;          // Buffer for high-priority requests (e.g., maintenance like refresh).
     ReqBuffer m_read_buffer;              // Read request buffer
     ReqBuffer m_write_buffer;             // Write request buffer
+    ReqBuffer m_rc_buffer;                // rowclone request buffer
+    ReqBuffer m_maj_buffer;               // majority request buffer
+    ReqBuffer m_aggregated_pum;           // once all requests have arrived they are made smaller
 
+    int pum_command_size = 32;            // How many rows are used for a operation 1 to 32
     int m_bank_addr_idx = -1;
 
     float m_wr_low_watermark;
@@ -36,10 +40,16 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
 
     size_t s_num_read_reqs = 0;
     size_t s_num_write_reqs = 0;
+    size_t s_num_frac_reqs = 0;
+    size_t s_num_rc_reqs = 0;
+    size_t s_num_maj_reqs = 0;
     size_t s_num_other_reqs = 0;
     size_t s_queue_len = 0;
     size_t s_read_queue_len = 0;
     size_t s_write_queue_len = 0;
+    size_t s_rc_queue_len = 0;
+    size_t s_maj_queue_len = 0;
+    size_t s_frac_queue_len = 0;
     size_t s_priority_queue_len = 0;
     float s_queue_len_avg = 0;
     float s_read_queue_len_avg = 0;
@@ -54,6 +64,10 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
     void init() override {
       m_wr_low_watermark =  param<float>("wr_low_watermark").desc("Threshold for switching back to read mode.").default_val(0.2f);
       m_wr_high_watermark = param<float>("wr_high_watermark").desc("Threshold for switching to write mode.").default_val(0.8f);
+      
+      // buffer at least 16x32 for max(bank) x max(row addresses)
+      m_maj_buffer.max_size = 512;
+      m_rc_buffer.max_size = 512;
 
       m_scheduler = create_child_ifce<IScheduler>();
       m_refresh = create_child_ifce<IRefreshManager>();    
@@ -66,6 +80,86 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
         }
       }
     };
+
+    /**
+     * @brief Checks if there are at least N requests with the same addr_vec in the given buffer.
+     *        If so, moves the first such request to the destination buffer and removes the first N such requests from the source buffer.
+     *         If it is a maj request that will be pushed to the destination buffer, we will also push 2 fractional commands
+     * @param src_buffer The source buffer to search (e.g., m_maj_buffer)
+     * @param dst_buffer The destination buffer to move the first matching request (e.g., m_active_buffer)
+     * @param N The required number of matching requests
+     * @return true if operation was performed, false otherwise
+     */
+    bool move_n_matching_requests(
+      ReqBuffer& src_buffer,
+      ReqBuffer& dst_buffer,
+      size_t N)
+    {
+      std::map<std::vector<int>, std::vector<ReqBuffer::iterator>> addr_map;
+      for (auto it = src_buffer.begin(); it != src_buffer.end(); ++it) {
+          addr_map[it->addr_vec].push_back(it);
+      }
+      for (auto& [addr_vec, iters] : addr_map) {
+        if (iters.size() >= N) {
+          // Prepare requests to enqueue
+          std::vector<Request> to_enqueue;
+          to_enqueue.push_back(*iters[0]);
+          if (iters[0]->type_id == Request::Type::Majority) {
+              to_enqueue.emplace_back(iters[0]->addr, Request::Type::Fractional);
+              to_enqueue.emplace_back(iters[0]->addr, Request::Type::Fractional);
+          }
+          // Check if there is enough space in the destination buffer
+          if (dst_buffer.size() + to_enqueue.size() <= dst_buffer.max_size) {
+              // Enqueue all requests
+              for (const auto& req : to_enqueue) {
+                  dst_buffer.enqueue(req);
+              }
+              // Remove the first N matching requests from src_buffer
+              for (size_t i = 0; i < N; ++i) {
+                  src_buffer.remove(iters[i]);
+              }
+              return true;
+          }
+          break;
+        }
+      }
+      return false;
+    }
+
+    /**
+     * @brief Checks all requests in m_aggregated_pum. If all are closing a bank already used by a command in m_active_buffer,
+     *        or not ready, return false. If at least one is not closing a used bank and is ready, set req_it and return true.
+     * @param req_it Iterator to the found request (output)
+     * @return true if at least one request is not closing a used bank and is ready, false otherwise
+     */
+    bool check_aggregated_pum_by_bank_and_ready(ReqBuffer::iterator& req_it)
+    {
+      for (auto pum_it = m_aggregated_pum.begin(); pum_it != m_aggregated_pum.end(); ++pum_it) {
+        bool is_closing = m_dram->m_command_meta(pum_it->command).is_closing;
+        auto& pum_rowgroup = pum_it->addr_vec;
+        bool closes_used_bank = false;
+        if (is_closing) {
+          for (auto _it = m_active_buffer.begin(); _it != m_active_buffer.end(); ++_it) {
+            auto& active_rowgroup = _it->addr_vec;
+            // Check if bank index matches (assuming m_bank_addr_idx is the bank index)
+            if (active_rowgroup[m_bank_addr_idx] == pum_rowgroup[m_bank_addr_idx] &&
+              active_rowgroup[m_bank_addr_idx] != -1 &&
+              pum_rowgroup[m_bank_addr_idx] != -1) {
+              closes_used_bank = true;
+              break;
+            }
+          }
+        }
+        // Check if the request is ready
+        if ((!is_closing || !closes_used_bank) &&
+          m_dram->check_ready(pum_it->command, pum_it->addr_vec)) {
+          req_it = pum_it;
+          return true;
+        }
+      }
+      // All requests are closing used banks or not ready
+      return false;
+    }
 
     void setup(IFrontEnd* frontend, IMemorySystem* memory_system) override {
       m_dram = memory_system->get_ifce<IDRAM>();
@@ -122,6 +216,18 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
           s_num_write_reqs++;
           break;
         }
+        case Request::Type::Fractional: {
+          s_num_frac_reqs++;
+          break;
+        }
+        case Request::Type::Rowclone: {
+          s_num_frac_reqs++;
+          break;
+        }
+        case Request::Type::Majority: {
+          s_num_frac_reqs++;
+          break;
+        }
         default: {
           s_num_other_reqs++;
           break;
@@ -144,10 +250,16 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
       // Else, enqueue them to corresponding buffer based on request type id
       bool is_success = false;
       req.arrive = m_clk;
-      if        (req.type_id == Request::Type::Read) {
+      if (req.type_id == Request::Type::Read) {
         is_success = m_read_buffer.enqueue(req);
       } else if (req.type_id == Request::Type::Write) {
         is_success = m_write_buffer.enqueue(req);
+      } else if (req.type_id == Request::Type::Rowclone) {
+        is_success = m_rc_buffer.enqueue(req);
+      } else if (req.type_id == Request::Type::Majority) {
+        is_success = m_maj_buffer.enqueue(req);
+      } else if (req.type_id == Request::Type::Fractional) {  // frac no need for several addresses
+        is_success = m_aggregated_pum.enqueue(req);
       } else {
         throw std::runtime_error("Invalid request type!");
       }
@@ -338,6 +450,7 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
     /**
      * @brief    Helper function to find a request to schedule from the buffers.
      * 
+     *     Active requests > Priority requests > PuM requests > Read & Write Requests
      */
     bool schedule_request(ReqBuffer::iterator& req_it, ReqBuffer*& req_buffer) {
       bool request_found = false;
@@ -363,7 +476,25 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
           }
         }
 
-        // 2.2.1    If no request to be scheduled in the priority buffer, check the read and write buffers.
+        // 2.2.1    If no request to be scheduled in the priority buffer, check the PuM buffers.
+        if (!request_found) {
+          // Check for the PuM buffer size, if it is big enough for an issue. Check the address is for same request.
+          // If we find pum commands requests that have arrived fully, we move them to aggregrate pum buffer for further check
+          if (m_aggregated_pum.size() + 1 <= m_aggregated_pum.max_size) {
+            move_n_matching_requests(m_maj_buffer, m_aggregated_pum, pum_command_size);
+            move_n_matching_requests(m_rc_buffer, m_aggregated_pum, pum_command_size);
+          }
+        }
+
+        // If we have a fully arrived and aggregated pum command at least in the buffer, check if it is issuable
+        if(m_aggregated_pum.size() > 0) {
+          request_found = check_aggregated_pum_by_bank_and_ready(req_it);
+          if (request_found) {
+            req_buffer = &m_aggregated_pum;
+          }
+        }
+
+        // 2.2.1    If no request to be scheduled in the PuM buffer, check the read and write buffers.
         if (!request_found) {
           // Query the write policy to decide which buffer to serve
           set_write_mode();
