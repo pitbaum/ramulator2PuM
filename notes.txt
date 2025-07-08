@@ -14,3 +14,50 @@
 // trace read
     Command (R,W,C,F,M) Address (int)
     Need to use "path" instead of "traces" for the trace file path in the yaml
+
+
+    Configure the project and build the executable
+```bash
+  $ mkdir build
+  $ cd build
+  $ cmake ..
+  $ make -j
+  $ cp ./ramulator2 ../ramulator2
+  $ cd ..
+```
+
+
+inline static constexpr ImplDef m_levels = {
+    "channel", "rank", "bankgroup", "bank", "row", "column",    
+};
+
+For only 1 channel and one rank
+Otherwise cutoff will be smaller and there will be 2, 2 for ch, ra
+
+[0] =
+0 bits Ch
+[1] = 
+0 bits Ra
+[2] =
+2 bits Bg
+[3] =
+2 bits Ba
+[4] =
+15 bits Ro
+[5] =
+6 bits Co
+
+
+00  00   1000 0000 0000 0000    1111 11   00 0000   134221792
+Bg  Ba         Row                Col     Cut off 
+
+same col different row: 134287296
+
+same row different col: 134221504
+
+different bank: 671092672
+
+
+gdb ./ramulator2
+run -f ./example_config.yaml
+bt
