@@ -15,7 +15,7 @@ class ReadWriteTrace : public IFrontEnd, public Implementation {
   private:
     struct Trace {
       int request_type_enum;
-      AddrVec_t addr_vec;
+      Addr_t addr;
     };
     std::vector<Trace> m_trace;
 
@@ -40,7 +40,7 @@ class ReadWriteTrace : public IFrontEnd, public Implementation {
       const Trace& t = m_trace[m_curr_trace_idx];
       // Here we send the request to the front end
       // Needed to change binary w ? r to the new enum in the request
-      m_memory_system->send({t.addr_vec, t.request_type_enum});
+      m_memory_system->send({t.addr, t.request_type_enum});
       m_curr_trace_idx = (m_curr_trace_idx + 1); // They were using % m_trace_length????? that would make infinite loop
     };
 
@@ -77,27 +77,19 @@ class ReadWriteTrace : public IFrontEnd, public Implementation {
             request_type_enum = 1;
             break;
           case 'F':
-            request_type_enum = 2;
+            request_type_enum = 7; // Those are the indexes of the LUT for DDR4 m_commands
             break;
           case 'C':
-            request_type_enum = 3;
+            request_type_enum = 5;
             break;
           case 'M':
-            request_type_enum = 4;
+            request_type_enum = 6;
             break;
           default:
             throw ConfigurationError("Trace {} format invalid!", file_path_str);
         }
-
-        std::vector<std::string> addr_vec_tokens;
-        tokenize(addr_vec_tokens, tokens[1], ",");
-
-        AddrVec_t addr_vec;
-        for (const auto& token : addr_vec_tokens) {
-          addr_vec.push_back(std::stoll(token));
-        }
-
-        m_trace.push_back({request_type_enum, addr_vec});
+        Addr_t addr = std::stoll(tokens[1]);
+        m_trace.push_back({request_type_enum, addr});
       }
 
       trace_file.close();

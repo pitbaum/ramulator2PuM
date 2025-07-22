@@ -61,3 +61,47 @@ different bank: 671092672
 gdb ./ramulator2
 run -f ./example_config.yaml
 bt
+
+
+static const std::vector<std::string> DDR4CommandNames = {
+"ACT"0, 
+"PRE"1, "PREA"2,
+"RD"3,  "WR"4,  "RDA"5,  "WRA"6,
+"REFab"7, "REFab_end"8,
+"RC"9, "MAJ"10, "FRAC"11,
+"ACTp"12, "ACTv"13,
+ "PREv"14, "PREj"15, "PREf"16
+};
+
+
+inline static constexpr ImplDef m_states = {
+"Opened"0, "Closed"1, "PowerUp"2, "N/A"3,
+"Refreshing"4, "OpenedPum"5, 
+"RCState"6, "MAJState"7, "Processed"8
+};
+
+
+State Diagram code: bLB1Yi8m5Bo_htXdmH_mi1ZI22ke9IruMFOWzeaLRKiJXMNPVz-yrwgfwC6SycOcCvEGgVERrfzFHu1zMH3IgV4_M93RjcNZoxe2-1fzutZyWVfOEofmWbckR0xzo0mh9cYM2SIefLrBRX-Oi0C8GPvGQMso37y1muh4guOgCLSw5wu71i6fDO-SDIhXX4G8cUvsZ-Ar_SnDKA-jCDqOoV-kBTFpubL5fgHb4xapA6rq9kUbwgMhr4DCfssz9UUkz-m4Tt1mLwkV-2_KF0euYEA6lPiG3Zw9k8bdLkakPpTq4MBWn0W_tfIgWh_IFm00
+
+
+
+Command: ACTp, AddrVec: 0 0 0 0 16384 63 , m_clk: 23
+Command: PREf, AddrVec: 0 0 0 0 16384 63 , m_clk: 24
+Command: FRAC, AddrVec: 0 0 0 0 16384 63 , m_clk: 37
+Command: ACTp, AddrVec: 0 0 0 0 16384 63 , m_clk: 38
+Command: PREf, AddrVec: 0 0 0 0 16384 63 , m_clk: 39
+Command: ACTp, AddrVec: 0 0 0 1 16384 63 , m_clk: 46
+Command: PREf, AddrVec: 0 0 0 1 16384 63 , m_clk: 47
+Command: FRAC, AddrVec: 0 0 0 0 16384 63 , m_clk: 52
+Command: ACTp, AddrVec: 0 0 0 0 16384 63 , m_clk: 54
+Command: PREj, AddrVec: 0 0 0 0 16384 63 , m_clk: 57
+Command: FRAC, AddrVec: 0 0 0 1 16384 63 , m_clk: 60
+Command: ACTp, AddrVec: 0 0 0 1 16384 63 , m_clk: 62
+Command: PREf, AddrVec: 0 0 0 1 16384 63 , m_clk: 63
+Command: ACTv, AddrVec: 0 0 0 0 16384 63 , m_clk: 64
+Command: FRAC, AddrVec: 0 0 0 1 16384 63 , m_clk: 76
+Command: MAJ, AddrVec: 0 0 0 0 16384 63 , m_clk: 77
+Command: ACTp, AddrVec: 0 0 0 1 16384 63 , m_clk: 78
+Command: PREj, AddrVec: 0 0 0 1 16384 63 , m_clk: 81
+Command: ACTv, AddrVec: 0 0 0 1 16384 63 , m_clk: 87
+Command: MAJ, AddrVec: 0 0 0 1 16384 63 , m_clk: 100

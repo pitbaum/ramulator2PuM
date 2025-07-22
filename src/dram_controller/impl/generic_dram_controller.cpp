@@ -16,7 +16,9 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
     ReqBuffer m_maj_buffer;               // majority request buffer
     ReqBuffer m_aggregated_pum;           // once all requests have arrived they are made smaller
 
-    int pum_command_size = 32;            // How many rows are used for a operation 1 to 32
+    int rc_command_size = 16;   // Amount of rowclone addresses needed to issue a command (2-16)
+    int maj_commandsize = 30;   // Amount of majority addresses needed to issue a command (3-30)
+    int frac_commands = 2;      // How often the frac should be executed
     int m_bank_addr_idx = -1;
 
     float m_wr_low_watermark;
@@ -103,11 +105,15 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
         if (iters.size() >= N) {
           // Prepare requests to enqueue
           std::vector<Request> to_enqueue;
-          to_enqueue.push_back(*iters[0]);
+          // Add the fractional commands that are necessary if the amount of rows in MAJ is not multiple of 3
           if (iters[0]->type_id == Request::Type::Majority) {
+            for (int fractionals = 0; fractionals < frac_commands; fractionals++) {
               to_enqueue.emplace_back(iters[0]->addr, Request::Type::Fractional);
-              to_enqueue.emplace_back(iters[0]->addr, Request::Type::Fractional);
+              to_enqueue.back().final_command = 11; // Set the final command manually (FRAC)
+              to_enqueue.back().addr_vec = iters[0]->addr_vec; // Set the addressvector manually (should be a prereserved row)
+            }
           }
+          to_enqueue.push_back(*iters[0]); // enqueue the request
           // Check if there is enough space in the destination buffer
           if (dst_buffer.size() + to_enqueue.size() <= dst_buffer.max_size) {
               // Enqueue all requests
@@ -127,32 +133,18 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
     }
 
     /**
-     * @brief Checks all requests in m_aggregated_pum. If all are closing a bank already used by a command in m_active_buffer,
-     *        or not ready, return false. If at least one is not closing a used bank and is ready, set req_it and return true.
+     * @brief Checks all requests in m_aggregated_pum If at least one is ready, set req_it and return true.
      * @param req_it Iterator to the found request (output)
      * @return true if at least one request is not closing a used bank and is ready, false otherwise
      */
     bool check_aggregated_pum_by_bank_and_ready(ReqBuffer::iterator& req_it)
     {
       for (auto pum_it = m_aggregated_pum.begin(); pum_it != m_aggregated_pum.end(); ++pum_it) {
-        bool is_closing = m_dram->m_command_meta(pum_it->command).is_closing;
-        auto& pum_rowgroup = pum_it->addr_vec;
-        bool closes_used_bank = false;
-        if (is_closing) {
-          for (auto _it = m_active_buffer.begin(); _it != m_active_buffer.end(); ++_it) {
-            auto& active_rowgroup = _it->addr_vec;
-            // Check if bank index matches (assuming m_bank_addr_idx is the bank index)
-            if (active_rowgroup[m_bank_addr_idx] == pum_rowgroup[m_bank_addr_idx] &&
-              active_rowgroup[m_bank_addr_idx] != -1 &&
-              pum_rowgroup[m_bank_addr_idx] != -1) {
-              closes_used_bank = true;
-              break;
-            }
-          }
-        }
-        // Check if the request is ready
-        if ((!is_closing || !closes_used_bank) &&
-          m_dram->check_ready(pum_it->command, pum_it->addr_vec)) {
+        // this initialize the prerequisit command for all requests in the buffer
+        // In the read and write one it is done inside of the get best request function which is hiding this.
+        pum_it->command = m_dram->get_preq_command(pum_it->final_command, pum_it->addr_vec);
+        // Check if the request is ready and if the prerequisit command is not -1 (state that you cant interrupt with your flow)
+        if (pum_it->command != -1 && m_dram->check_ready(pum_it->command, pum_it->addr_vec)) {
           req_it = pum_it;
           return true;
         }
@@ -216,7 +208,7 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
           s_num_write_reqs++;
           break;
         }
-        case Request::Type::Fractional: {
+        case Request::Type::Fractional: { // the Type id is not coherent with internal DDR4 command ids
           s_num_frac_reqs++;
           break;
         }
@@ -235,6 +227,7 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
       }
 
       // Forward existing write requests to incoming read requests
+      // Reason why some Read requests might not be listed when printing commands, instead of issuing read, just send the write data back
       if (req.type_id == Request::Type::Read) {
         auto compare_addr = [req](const Request& wreq) {
           return wreq.addr == req.addr;
@@ -454,48 +447,53 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
      */
     bool schedule_request(ReqBuffer::iterator& req_it, ReqBuffer*& req_buffer) {
       bool request_found = false;
+      bool is_active_buffer = false;
       // 2.1    First, check the act buffer to serve requests that are already activating (avoid useless ACTs)
       if (req_it= m_scheduler->get_best_request(m_active_buffer); req_it != m_active_buffer.end()) {
         if (m_dram->check_ready(req_it->command, req_it->addr_vec)) {
           request_found = true;
           req_buffer = &m_active_buffer;
+          return request_found;
         }
       }
 
-      // 2.2    If no requests can be scheduled from the act buffer, check the rest of the buffers
-      if (!request_found) {
+      // 2.2    If no requests can be scheduled from the act buffer or not issuable, check the rest of the buffers
+      if (!request_found || req_it->command == -1) {
         // 2.2.1    We first check the priority buffer to prioritize e.g., maintenance requests
         if (m_priority_buffer.size() != 0) {
           req_buffer = &m_priority_buffer;
           req_it = m_priority_buffer.begin();
           req_it->command = m_dram->get_preq_command(req_it->final_command, req_it->addr_vec);
-          
-          request_found = m_dram->check_ready(req_it->command, req_it->addr_vec);
+          // Only check if a command is ready if their prerequisit is not -1
+          // -1 Being that you are in a not interruptable state (unfinished PuM state, RDWR open instead of PuM open)
+          if (req_it->command != -1){
+            request_found = m_dram->check_ready(req_it->command, req_it->addr_vec);
+          }
           if (!request_found & m_priority_buffer.size() != 0) {
             return false;
           }
         }
 
-        // 2.2.1    If no request to be scheduled in the priority buffer, check the PuM buffers.
-        if (!request_found) {
-          // Check for the PuM buffer size, if it is big enough for an issue. Check the address is for same request.
-          // If we find pum commands requests that have arrived fully, we move them to aggregrate pum buffer for further check
-          if (m_aggregated_pum.size() + 1 <= m_aggregated_pum.max_size) {
-            move_n_matching_requests(m_maj_buffer, m_aggregated_pum, pum_command_size);
-            move_n_matching_requests(m_rc_buffer, m_aggregated_pum, pum_command_size);
+        // 2.2.1 If no request to be scheduled in the priority buffer or not issuable at this state, check the PuM buffers.
+        // Check for the PuM buffer size, if it is big enough for an issue. Check the address is for same request.
+        // If we find pum commands requests that have arrived fully, we move them to aggregrate pum buffer for further check
+        if (m_aggregated_pum.size() + 1 <= m_aggregated_pum.max_size) {
+          move_n_matching_requests(m_maj_buffer, m_aggregated_pum, maj_commandsize);
+          move_n_matching_requests(m_rc_buffer, m_aggregated_pum, rc_command_size);
+        }
+
+        if(!request_found || req_it->command == -1) {
+          // If we have a fully arrived and aggregated pum command at least in the buffer, check if it is issuable
+          if(m_aggregated_pum.size() > 0) {
+            request_found = check_aggregated_pum_by_bank_and_ready(req_it);
+            if (request_found) {
+              req_buffer = &m_aggregated_pum;
+            }
           }
         }
 
-        // If we have a fully arrived and aggregated pum command at least in the buffer, check if it is issuable
-        if(m_aggregated_pum.size() > 0) {
-          request_found = check_aggregated_pum_by_bank_and_ready(req_it);
-          if (request_found) {
-            req_buffer = &m_aggregated_pum;
-          }
-        }
-
-        // 2.2.1    If no request to be scheduled in the PuM buffer, check the read and write buffers.
-        if (!request_found) {
+        // 2.2.1 If no request to be scheduled in the PuM buffer or request invalid, check the read and write buffers.
+        if (!request_found || req_it->command == -1) {
           // Query the write policy to decide which buffer to serve
           set_write_mode();
           auto& buffer = m_is_write_mode ? m_write_buffer : m_read_buffer;
@@ -504,6 +502,14 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
             req_buffer = &buffer;
           }
         }
+      }
+
+      // If the prerequisit to the command you found is -1, the command is actually not really ready
+      // The scheduler should always prioritize requests that are not -1
+      // Thus if we still get one here, we just return request was not found
+      if (req_it->command == -1) {
+        request_found = false;
+        return request_found;
       }
 
       // 2.3 If we find a request to schedule, we need to check if it will close an opened row in the active buffer.
@@ -527,6 +533,35 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
         }
       }
 
+      // 2.4 If we find a request to schedule, we need to check if it will interrupt an already active PuM command given inter bank and bankgroup switching times.
+      // If the best request we found is not fast enough to not issue and return when the APA command is scheduled in active buffer, then dont issue the found request.
+      // Additionally make sure that no Request is issued that would interfere with a tightly constraint command in the APA chain
+      // Tightly constraint PuM commands are all the APA commands, though the only one with realistic switching time to schedule inbetween is the RC ACTp -> PREv
+      if (request_found) {
+        int channel_index = 0; // in ChRaBgBaRoCo organization
+        int rank_index = 1;
+        int bankgroup_index = 2;
+        int ACTv_index = 13; // in DDR4 standard
+        int PREj_index = 15;
+        int PREv_index = 14;
+        int ACTp_index = 12; // PREf not necessary, if that would have been the case it would have already been issued
+        auto& rowgroup = req_it->addr_vec;
+        for (auto _it = m_active_buffer.begin(); _it != m_active_buffer.end(); _it++) {
+          // Only enforce if the active buffer command scheduled is PuM related
+          if (_it->command == ACTv_index || _it->command == PREj_index || _it->command == PREv_index || _it->command == ACTp_index) {
+            auto& _it_rowgroup = _it->addr_vec;
+            // Only necessary if we are on the same DIMM (i.e. same rank, same channel)
+            // Rank has full parallelism in terms of ACT and PRE commands so we dont need to add additional constraint to it
+            for (int i = 0; i < m_bank_addr_idx + 1 ; i++) {
+              if (_it_rowgroup[channel_index] == rowgroup[channel_index] && _it_rowgroup[channel_index] == rowgroup[channel_index] && _it_rowgroup[i] != -1 && rowgroup[i] != -1) {
+                // Same bankgroup as something in active buffer
+                bool is_same_bg = _it_rowgroup[bankgroup_index] == rowgroup[bankgroup_index];
+                request_found = m_dram->check_interuption_with_delay(_it->command, _it->final_command, req_it->command, req_it->final_command, _it->addr_vec, req_it->addr_vec, true);
+              }
+            }
+          }
+        }
+      }
       return request_found;
     }
 

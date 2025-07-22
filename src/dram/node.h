@@ -198,16 +198,47 @@ struct DRAMNodeBase {
       }
 
       if (!m_child_nodes.size()) {
-        // stop recursion: there were no prequisites at any level
-        return command; 
+        // stop recursion: there were no prequisites at any level, thus return -1, since no prerequisite
+        // Not sure if there is any command in DRAM that does not have any prerequisits so the default return command wouldnt make any sense either
+        return -1;
       }
 
       // recursively get_preq_command at my child
       return m_child_nodes[child_id]->get_preq_command(command, addr_vec, m_clk);
     };
 
+    // Function that returns the ready clock for the command passed
+    // Usage is exclusive for already in the active buffer commands, all else might behave ujnexpectelty due to the command being prerequisite command being -1  
+    int get_ready_clk_active(int command, const AddrVec_t& addr_vec, Clk_t clk) {
+      // it should not be possible for command to be -1 at this, if it was we would be hard stuck on this bank
+      if (command != -1 && clk < m_cmd_ready_clk[command]) {
+        // stop recursion: the check failed at this level
+        return m_cmd_ready_clk[command];
+      }
+
+      int child_id = addr_vec[m_level+1];
+      if (m_level == m_spec->m_command_scopes[command] || !m_child_nodes.size()) {
+        // stop recursion: the check passed at all levels
+        return m_cmd_ready_clk[command]; 
+      }
+
+      if (child_id == -1) {
+        // if it is a same bank command, recurse all children in rank level
+        bool ready = true;
+        for (auto child : m_child_nodes) {
+          ready = ready && child->check_ready(command, addr_vec, clk);
+        }
+        return m_cmd_ready_clk[command];
+      } else {
+        // recursively check my child
+        return m_child_nodes[child_id]->check_ready(command, addr_vec, clk);
+      }
+    }
+
     bool check_ready(int command, const AddrVec_t& addr_vec, Clk_t clk) {
-      if (m_cmd_ready_clk[command] != -1 && clk < m_cmd_ready_clk[command]) {
+      // They didnt add that if the command was actually -1 what should happen.
+      // With new logic it is an expected case and should issue that command is not ready since -1 doesnt exist and cant exist
+      if (command == -1 || (m_cmd_ready_clk[command] != -1 && clk < m_cmd_ready_clk[command])) {
         // stop recursion: the check failed at this level
         return false; 
       }

@@ -18,10 +18,10 @@ struct Request {
   struct Type {
     enum : int {
       Read = 0, 
-      Write,
-      Fractional,
-      Rowclone,
-      Majority,
+      Write = 1,
+      Fractional = 7,
+      Rowclone = 5,
+      Majority = 6,
     };
   };
 

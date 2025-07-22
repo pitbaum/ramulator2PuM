@@ -6,7 +6,7 @@ Frontend:
 
   Translation:
     impl: NoTranslation
-    max_addr: 2147483648
+    max_addr: 1073741824
               
 
 MemorySystem:
@@ -18,9 +18,9 @@ MemorySystem:
     org:
       preset: DDR4_8Gb_x8
       channel: 1
-      rank: 2
+      rank: 1
     timing:
-      preset: DDR4_2400R 
+      preset: DDR4_4000
 
   Controller:
     impl: Generic
@@ -34,4 +34,4 @@ MemorySystem:
     plugins:
 
   AddrMapper:
-    impl: RoBaRaCoCh
+    impl: ChRaBaRoCo

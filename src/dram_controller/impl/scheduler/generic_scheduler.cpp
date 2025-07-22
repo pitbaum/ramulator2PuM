@@ -31,6 +31,15 @@ class FRFCFS : public IScheduler, public Implementation {
       }
 
       // Fallback to FCFS
+      // If one of them has prerequisit -1, choose the other one instead
+      if (req1->command == -1)
+      {
+        return req2;
+      }
+      if (req2->command == -1)
+      {
+        return req1;
+      }// If both are -1 it doesnt matter, the controller will not issue anyways
       if (req1->arrive <= req2->arrive) {
         return req1;
       } else {

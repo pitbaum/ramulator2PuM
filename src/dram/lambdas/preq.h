@@ -22,11 +22,22 @@ int RequireRowOpen(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, C
       } else {
         return T::m_commands["PRE"];
       }
-    }    
+    }
     case T::m_states["Refreshing"]: return T::m_commands["ACT"];
     default: {
-      spdlog::error("[Preq::Bank] Invalid bank state for an RD/WR command!");
-      std::exit(-1);      
+      return -1;     
+    } 
+  }
+};
+
+template <class T>
+int RequireBankClosed(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, Clk_t clk) {
+  switch (node->m_state) {
+    case T::m_states["Closed"]: return cmd;
+    case T::m_states["Opened"]: return T::m_commands["PRE"];
+    case T::m_states["Refreshing"]: return cmd;
+    default: { // Something is already active and this state is not meant to be interupted so the return wont matter
+      return -1;
     } 
   }
 };
@@ -42,8 +53,7 @@ int RequireRowOpenPum(typename T::Node* node, int cmd, const AddrVec_t& addr_vec
     // If we are refreshing than just take ACTp since it is a form of refreshing
     case T::m_states["Refreshing"]: return T::m_commands["ACTp"];
     default: {
-      spdlog::error("[Preq::Bank] Invalid bank state for an RD/WR command!");
-      std::exit(-1);      
+      return Ramulator::Lambdas::Preq::Bank::RequireBankClosed<T>(node, cmd, addr_vec, clk);
     } 
   }
 };
@@ -84,19 +94,6 @@ int RequireFRAC(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, Clk_
     default: return Ramulator::Lambdas::Preq::Bank::RequireRowOpenPum<T>(node, cmd, addr_vec, clk);
   }
 };
-
-template <class T>
-int RequireBankClosed(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, Clk_t clk) {
-  switch (node->m_state) {
-    case T::m_states["Closed"]: return cmd;
-    case T::m_states["Opened"]: return T::m_commands["PRE"];
-    case T::m_states["Refreshing"]: return cmd;
-    default: {
-      spdlog::error("[Preq::Bank] Invalid bank state for an RD/WR command!");
-      std::exit(-1);      
-    } 
-  }
-};  
 }       // namespace Bank
 
 namespace Rank {

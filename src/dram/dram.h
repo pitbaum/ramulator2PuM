@@ -109,6 +109,19 @@ class IDRAM : public Clocked<IDRAM> {
     virtual bool check_ready(int command, const AddrVec_t& addr_vec) = 0;
 
     /**
+     * @brief     Checks if a command can be issued in parallel with a PuM command.
+     * @details
+     * Given a command from the active buffer, a command to issue, their addresses, and the current clock cycle, 
+     * this function should return whether the current state of the device allows scheduling of the command.
+     * 
+     */
+    virtual bool check_interuption_with_delay(
+        int active_command, int final_command,
+        int found_command, int found_final_command,
+        const AddrVec_t& active_addr_vec, const AddrVec_t& found_addr_vec,
+        bool is_bg) = 0;
+
+    /**
      * @brief     Checks whether the command will result in a rowbuffer hit
      * @details
      * Given a command and its address, this function should return whether it will

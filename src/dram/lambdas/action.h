@@ -64,7 +64,7 @@ namespace Bank {
     node->m_row_state.clear();
   };
 
-  // For FRAC: Closed, OpenedPum, Processedm Closed
+  // For FRAC: Closed, OpenedPum, ProcessedFRAC Closed
   template <class T>
   void PREf(typename T::Node* node, int cmd, int target_id, Clk_t clk) {
     node->m_state = T::m_states["Processed"];
