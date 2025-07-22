@@ -105,3 +105,19 @@ Command: ACTp, AddrVec: 0 0 0 1 16384 63 , m_clk: 78
 Command: PREj, AddrVec: 0 0 0 1 16384 63 , m_clk: 81
 Command: ACTv, AddrVec: 0 0 0 1 16384 63 , m_clk: 87
 Command: MAJ, AddrVec: 0 0 0 1 16384 63 , m_clk: 100
+
+
+TO run the main with read write trace, change the following in main:
+  for (uint64_t i = 0;; i++) {
+    if (((i % tick_mult) % mem_tick) == 0) { 
+      if (!frontend->is_finished()) {
+        frontend->tick();
+      }
+    }
+
+    if (frontend->is_finished() && i > 100000) {
+      break;
+    }
+
+such that it wont directly stop as soon as the front end stopped sending over requests
+
