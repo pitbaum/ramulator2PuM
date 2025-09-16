@@ -16,6 +16,10 @@ class GEM5 : public IFrontEnd, public Implementation {
     void tick() override { };
 
     bool receive_external_requests(int req_type_id, Addr_t addr, int source_id, std::function<void(Request&)> callback) override {
+      // Give some extra notification for PuM requests received
+      if (req_type_id != 1 && req_type_id != 0)    
+        std::cout << req_type_id << "," << addr << "," << source_id << std::endl;
+
       return m_memory_system->send({addr, req_type_id, source_id, callback});
     }
 

@@ -63,9 +63,8 @@ int RequireRC(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, Clk_t 
   switch (node->m_state) {
     // Issue the PREv command for Rowclone APA
     case T::m_states["OpenedPum"]: return T::m_commands["PREv"];
-    // issue the ACTv command for Rowclone APA
-    case T::m_states["RCState"]: return T::m_commands["ACTv"];
-    case T::m_states["Processed"]: return cmd; // finished Rowclone
+    // issue the RC
+    case T::m_states["RCState"]: return cmd;
     // Need to first get into the OPEN PuM state
     default: return Ramulator::Lambdas::Preq::Bank::RequireRowOpenPum<T>(node, cmd, addr_vec, clk);
   }
@@ -76,9 +75,8 @@ int RequireMAJ(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, Clk_t
   switch (node->m_state) {
     // Isssue the PREj command for MAJ APA
     case T::m_states["OpenedPum"]: return T::m_commands["PREj"];
-    // issue the ACTv command for MAJ APA
-    case T::m_states["MAJState"]: return T::m_commands["ACTv"];
-    case T::m_states["Processed"]: return cmd; // finished MAJ
+    // issue the MAJ
+    case T::m_states["MAJState"]: return cmd;
     // Need to first get into the OPEN PuM state
     default: return Ramulator::Lambdas::Preq::Bank::RequireRowOpenPum<T>(node, cmd, addr_vec, clk);
   }
@@ -87,9 +85,7 @@ int RequireMAJ(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, Clk_t
 template <class T>
 int RequireFRAC(typename T::Node* node, int cmd, const AddrVec_t& addr_vec, Clk_t clk) {
   switch (node->m_state) {
-    // Issue the PREf command for FRAC
-    case T::m_states["OpenedPum"]: return T::m_commands["PREf"];
-    case T::m_states["Processed"]: return cmd; // finished FRAC
+    case T::m_states["OpenedPum"]: return cmd;
     // Neeed to first get into the OPEN PuM state
     default: return Ramulator::Lambdas::Preq::Bank::RequireRowOpenPum<T>(node, cmd, addr_vec, clk);
   }

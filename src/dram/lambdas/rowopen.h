@@ -13,10 +13,9 @@ namespace Bank {
       case T::m_states["Closed"]: return false;
       case T::m_states["Opened"]: return true;
       case T::m_states["Refreshing"]: return false;
-      // Add Pum states, could add optimization that Processed is technically readable and could be thus open
+      // Add Pum states
       case T::m_states["OpenedPum"]: return false;
       case T::m_states["RCState"]: return false;
-      case T::m_states["Processed"]: return false;
       case T::m_states["MAJState"]: return false;
       default: {
         spdlog::error("[RowHit::Bank] Invalid bank state for an RD/WR command!");

@@ -16,9 +16,9 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
     ReqBuffer m_maj_buffer;               // majority request buffer
     ReqBuffer m_aggregated_pum;           // once all requests have arrived they are made smaller
 
-    int rc_command_size = 16;   // Amount of rowclone addresses needed to issue a command (2-16)
-    int maj_commandsize = 30;   // Amount of majority addresses needed to issue a command (3-30)
-    int frac_commands = 2;      // How often the frac should be executed
+    const int rc_command_size = 2;   // Amount of rowclone addresses needed to issue a command (2-16)
+    const int maj_commandsize = 2;   // Amount of majority addresses needed to issue a command (3-30)
+    const int frac_commands = 0;      // How often the frac should be executed
     int m_bank_addr_idx = -1;
 
     float m_wr_low_watermark;
@@ -84,27 +84,30 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
     };
 
     /**
-     * @brief Checks if there are at least N requests with the same addr_vec in the given buffer.
+     * @brief Checks if there are at least N requests with the same source id in the given buffer.
      *        If so, moves the first such request to the destination buffer and removes the first N such requests from the source buffer.
-     *         If it is a maj request that will be pushed to the destination buffer, we will also push 2 fractional commands
+     *         If it is a maj request that will be pushed to the destination buffer, we will also push x fractional commands
      * @param src_buffer The source buffer to search (e.g., m_maj_buffer)
      * @param dst_buffer The destination buffer to move the first matching request (e.g., m_active_buffer)
      * @param N The required number of matching requests
      * @return true if operation was performed, false otherwise
      */
     bool move_n_matching_requests(
-      ReqBuffer& src_buffer,
-      ReqBuffer& dst_buffer,
-      size_t N)
+    ReqBuffer& src_buffer,
+    ReqBuffer& dst_buffer,
+    size_t N)
     {
-      std::map<std::vector<int>, std::vector<ReqBuffer::iterator>> addr_map;
+      // Group requests by source_id
+      std::map<int, std::vector<ReqBuffer::iterator>> source_map;
       for (auto it = src_buffer.begin(); it != src_buffer.end(); ++it) {
-          addr_map[it->addr_vec].push_back(it);
+          source_map[it->source_id].push_back(it);
       }
-      for (auto& [addr_vec, iters] : addr_map) {
+      for (auto& [source_id, iters] : source_map) {
+        // If there is enough requests with the same requestor id, aggregate it
         if (iters.size() >= N) {
           // Prepare requests to enqueue
           std::vector<Request> to_enqueue;
+          
           // Add the fractional commands that are necessary if the amount of rows in MAJ is not multiple of 3
           if (iters[0]->type_id == Request::Type::Majority) {
             for (int fractionals = 0; fractionals < frac_commands; fractionals++) {
@@ -113,6 +116,7 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
               to_enqueue.back().addr_vec = iters[0]->addr_vec; // Set the addressvector manually (should be a prereserved row)
             }
           }
+          
           to_enqueue.push_back(*iters[0]); // enqueue the request
           // Check if there is enough space in the destination buffer
           if (dst_buffer.size() + to_enqueue.size() <= dst_buffer.max_size) {
@@ -532,7 +536,7 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
           }
         }
       }
-
+      /*
       // 2.4 If we find a request to schedule, we need to check if it will interrupt an already active PuM command given inter bank and bankgroup switching times.
       // If the best request we found is not fast enough to not issue and return when the APA command is scheduled in active buffer, then dont issue the found request.
       // Additionally make sure that no Request is issued that would interfere with a tightly constraint command in the APA chain
@@ -561,7 +565,7 @@ class GenericDRAMController final : public IDRAMController, public Implementatio
             }
           }
         }
-      }
+      }*/
       return request_found;
     }
 

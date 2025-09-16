@@ -81,7 +81,7 @@ class DDR4 : public IDRAM, public Implementation {
       "PRE", "PREA",
       "RD",  "WR",  "RDA",  "WRA",
       "REFab", "REFab_end",
-      "RC", "MAJ", "FRAC", "ACTp", "ACTv", "PREv", "PREj", "PREf",
+      "RC", "MAJ", "FRAC", "ACTp", "PREv", "PREj",
     };
 
     inline static const ImplLUT m_command_scopes = LUT (
@@ -90,8 +90,8 @@ class DDR4 : public IDRAM, public Implementation {
         {"PRE",   "bank"},   {"PREA",   "rank"},
         {"RD",    "column"}, {"WR",     "column"}, {"RDA",   "column"}, {"WRA",   "column"},
         {"REFab", "rank"},  {"REFab_end", "rank"},
-        {"RC",    "bank"}, {"MAJ", "bank"}, {"FRAC", "bank"},
-        {"ACTp", "row"}, {"ACTv",  "row"}, {"PREv", "bank"}, {"PREj", "bank"}, {"PREf", "bank"}, 
+        {"RC",    "row"}, {"MAJ", "row"}, {"FRAC", "row"},
+        {"ACTp", "row"}, {"PREv", "bank"}, {"PREj", "bank"}, 
       }
     );
 
@@ -107,17 +107,15 @@ class DDR4 : public IDRAM, public Implementation {
         {"WRA",       {false,  true,    true,    false}},
         {"REFab",     {false,  false,   false,   true }},
         {"REFab_end", {false,  true,    false,   false}},
-        // Put the initial command ACTp to openting such that it will move the request to active buffer
+        // Put the initial command ACTp to opening such that it will move the request to active buffer
         // Put all the PuM commands to closing since this is only for the scheduler
         // We want there to be not interuptions to active buffer hits after starting a PuM with ACTp
         {"RC",        {false,  true,    false,   false}}, 
         {"MAJ",       {false,  true,    false,   false}},
         {"FRAC",      {false,  true,    false,   false}},
         {"ACTp",      {true,   false,   false,   false}},
-        {"ACTv",      {false,  true,   false,   false}},
         {"PREv",      {false,  true,   false,   false}},
         {"PREj",      {false,  true,   false,   false}},
-        {"PREf",      {false,  true,   false,   false}},
       }
     );
 
@@ -170,7 +168,7 @@ class DDR4 : public IDRAM, public Implementation {
    *                 Node States
    ***********************************************/
     inline static constexpr ImplDef m_states = {
-       "Opened", "Closed", "PowerUp", "N/A", "Refreshing", "OpenedPum", "RCState", "MAJState", "Processed"
+       "Opened", "Closed", "PowerUp", "N/A", "Refreshing", "OpenedPum", "RCState", "MAJState"
     };
 
     inline static const ImplLUT m_init_states = LUT (
@@ -235,7 +233,7 @@ class DDR4 : public IDRAM, public Implementation {
         "PRE", "PREA",
         "RD",  "WR",  "RDA",  "WRA",
         "REFab", "REFab_end",
-        "RC", "MAJ", "FRAC", "ACTp", "ACTv", "PREv", "PREj", "PREf"
+        "RC", "MAJ", "FRAC", "ACTp", "PREv", "PREj",
       };
       // Print commands issued and when
       std::cout << "Command: " << DDR4CommandNames[command]
@@ -244,7 +242,7 @@ class DDR4 : public IDRAM, public Implementation {
         std::cout << v << " ";
       }
       std::cout << ", m_clk: " << m_clk << std::endl;    
-
+      
       // Check if the command requires future action
       check_future_action(command, addr_vec);
     };
@@ -283,7 +281,7 @@ class DDR4 : public IDRAM, public Implementation {
       int channel_id = addr_vec[m_levels["channel"]];
       return m_channels[channel_id]->check_ready(command, addr_vec, m_clk);
     };
-
+    /*
     // Check if you can issue some command without interupting some PuM APA command schedules in a way that would violate their tight scheduling
     bool check_interuption_with_delay(int active_command, int final_command, int found_command, int found_final_command, const AddrVec_t& active_addr_vec, const AddrVec_t& found_addr_vec, bool is_bg){
       // Set which delay to check on
@@ -296,7 +294,7 @@ class DDR4 : public IDRAM, public Implementation {
       int found_ready_clock_cylce = m_channels[found_addr_vec[m_levels["channel"]]]->get_ready_clk_active(found_command, found_addr_vec, m_clk);
 
       // Set command names (should cleanup and use from the enum in ddr4 standard above)
-      int rc = 9, prev = 14, actp = 12, frac = 11, maj = 10, prej = 15, actv = 13;
+      int rc = 9, prev = 14, actp = 12, frac = 11, maj = 10, prej = 15
 
       // The only one that can realistacially have enough time to schedule something inbetween is the RC ACTp -> PREv command delay (36 clk)
       // All others the condition to say if you can switch back and forth and still issue, satisfies the rules due to the too small delay between commands that wont fit anything inbetween anyways
@@ -311,7 +309,7 @@ class DDR4 : public IDRAM, public Implementation {
           if (found_command == prej) {
             return (active_ready_clock_cylce > found_ready_clock_cylce + 6 + issuing_delay);
           } 
-          if (found_command == actv) {
+          if (found_command == frac || found_command == maj) {
             return (active_ready_clock_cylce > found_ready_clock_cylce + issuing_delay);
           }
         }
@@ -340,7 +338,7 @@ class DDR4 : public IDRAM, public Implementation {
       // Anything else is not tight scheduled, issue as long as you can switch back in time to issue the tight active command
       return (active_ready_clock_cylce > found_ready_clock_cylce + issuing_delay);
       
-    };
+    };*/
 
     bool check_rowbuffer_hit(int command, const AddrVec_t& addr_vec) override {
       int channel_id = addr_vec[m_levels["channel"]];
@@ -549,23 +547,20 @@ class DDR4 : public IDRAM, public Implementation {
           /// CAS <-> CAS between sibling ranks, nCS (rank switching) is needed for new DQS
           {.level = "rank", .preceding = {"RD", "RDA"}, .following = {"RD", "RDA", "WR", "WRA"}, .latency = V("nBL") + V("nCS"), .is_sibling = true},
           {.level = "rank", .preceding = {"WR", "WRA"}, .following = {"RD", "RDA"}, .latency = V("nCL")  + V("nBL") + V("nCS") - V("nCWL"), .is_sibling = true},
-          // Need rank switching time for PuM but dont need the burst length
-          {.level = "rank", .preceding = {"FRAC", "MAJ", "RC"}, .following = {"RD", "RDA", "WR", "WRA", "FRAC", "MAJ", "RC"}, .latency = V("nCS"), .is_sibling = true},
-          {.level = "rank", .preceding = {"RD", "RDA", "WR", "WRA"}, .following = {"FRAC", "MAJ", "RC"}, .latency = V("nCS"), .is_sibling = true},
+
           /// CAS <-> PREab
           // No additional time all PuM already ends in PRE
           {.level = "rank", .preceding = {"RD"}, .following = {"PREA"}, .latency = V("nRTP")},
           {.level = "rank", .preceding = {"WR"}, .following = {"PREA"}, .latency = V("nCWL") + V("nBL") + V("nWR")},         
-          {.level = "rank", .preceding = {"FRAC", "RC", "MAJ"}, .following = {"PREA"}, .latency = 1},
 
           /// RAS <-> RAS
-          {.level = "rank", .preceding = {"ACT"}, .following = {"ACT", "ACTp", "ACTv"}, .latency = V("nRRDS")},         
+          {.level = "rank", .preceding = {"ACT"}, .following = {"ACT"}, .latency = V("nRRDS")},         
           {.level = "rank", .preceding = {"ACT"}, .following = {"ACT"}, .latency = V("nFAW"), .window = 4},          
           {.level = "rank", .preceding = {"ACT"}, .following = {"PREA"}, .latency = V("nRAS")},          
           {.level = "rank", .preceding = {"PREA"}, .following = {"ACT", "ACTp"}, .latency = V("nRP")},
-          // Add the PuM acts for the bank prallelism
-          {.level = "rank", .preceding = {"ACTp"}, .following = {"ACT", "ACTp", "ACTv"}, .latency = V("nRRDS")},
-          {.level = "rank", .preceding = {"ACTv"}, .following = {"ACT", "ACTp", "ACTv"}, .latency = V("nRRDS")},  
+          // Add the PuM acts for bank prallelism
+          //{.level = "rank", .preceding = {"ACTp"}, .following = {"ACT", "ACTp", "RC", "MAJ", "FRAC"}, .latency = -1},
+          //{.level = "rank", .preceding = {"RC", "MAJ", "FRAC"}, .following = {"ACT", "ACTp", "RC", "MAJ", "FRAC"}, .latency = -1},  
 
           /// RAS <-> REF
           {.level = "rank", .preceding = {"ACT"}, .following = {"REFab"}, .latency = V("nRC")},          
@@ -581,26 +576,21 @@ class DDR4 : public IDRAM, public Implementation {
           {.level = "bankgroup", .preceding = {"RD", "RDA"}, .following = {"RD", "RDA"}, .latency = V("nCCDL")},          
           {.level = "bankgroup", .preceding = {"WR", "WRA"}, .following = {"WR", "WRA"}, .latency = V("nCCDL")},          
           {.level = "bankgroup", .preceding = {"WR", "WRA"}, .following = {"RD", "RDA"}, .latency = V("nCWL") + V("nBL") + V("nWTRL")},
-          // Only care about the bankgroup delay to final PuM commands followed by access command, since the preceeding end PuM commands are not really commands
-          // They are just a place holder for how long you need to backoff to enforce precharge timing delays correctly
-          // So you can issue them as soon as they are possible, but everything after it needs to be issued with constraints
-          {.level = "bankgroup", .preceding = {"MAJ", "FRAC", "RC"}, .following = {"RD", "RDA", "WR", "WRA"}, .latency = V("nCCDL")},          
           
           /// RAS <-> RAS
-          {.level = "bankgroup", .preceding = {"ACT"}, .following = {"ACT", "ACTp", "ACTv"}, .latency = V("nRRDL")}, 
-          {.level = "bankgroup", .preceding = {"ACTp"}, .following = {"ACT", "ACTp", "ACTv"}, .latency = V("nRRDL")},
-          {.level = "bankgroup", .preceding = {"ACTv"}, .following = {"ACT", "ACTp", "ACTv"}, .latency = V("nRRDL")},
+          {.level = "bankgroup", .preceding = {"ACT"}, .following = {"ACT"}, .latency = V("nRRDL")}, 
 
           /*** Bank ***/ 
           {.level = "bank", .preceding = {"ACT"}, .following = {"ACT"}, .latency = V("nRC")},
           {.level = "bank", .preceding = {"ACT"}, .following = {"RD", "RDA", "WR", "WRA"}, .latency = V("nRCD")},  
           {.level = "bank", .preceding = {"ACT"}, .following = {"PRE"}, .latency = V("nRAS")},  
-          {.level = "bank", .preceding = {"PRE"}, .following = {"ACT"}, .latency = V("nRP")},  
+          {.level = "bank", .preceding = {"PRE"}, .following = {"ACT", "ACTp"}, .latency = V("nRP")},  
           {.level = "bank", .preceding = {"RD"},  .following = {"PRE"}, .latency = V("nRTP")},  
           {.level = "bank", .preceding = {"WR"},  .following = {"PRE"}, .latency = V("nCWL") + V("nBL") + V("nWR")},  
           {.level = "bank", .preceding = {"RDA"}, .following = {"ACT"}, .latency = V("nRTP") + V("nRP")},  
           {.level = "bank", .preceding = {"WRA"}, .following = {"ACT"}, .latency = V("nCWL") + V("nBL") + V("nWR") + V("nRP")},
           
+          /*
           // Additional delays for PuM
           /// Since all PuM commands have been implemented to be complete in themselves, everything can be issued after they are done
           /// They are done after the main timings have passed (See below PuM main timings)
@@ -608,24 +598,28 @@ class DDR4 : public IDRAM, public Implementation {
           {.level = "bank", .preceding = {"MAJ"}, .following = {"RD", "WR", "ACT", "PRE", "WRA", "RDA", "WR", "FRAC", "RC", "MAJ"}, .latency = 3 + 6 + V("nRP")},
           {.level = "bank", .preceding = {"FRAC"}, .following = {"RD", "WR", "ACT", "PRE", "WRA", "RDA", "WR", "RC", "MAJ", "FRAC"}, .latency = 1 + V("nRP")},
 
-          // PuM main timings
-          /// ROWCLONE:   ACT tRAS -> PREv 3ns -> ACTv tRP-> RC (Need to manually issue a PRE after)
-          /// MAJORITY:   ACT 1.5ns -> PREj 3ns -> ACTv tRP -> MAJ (Back in closed state again)
-          /// FRACTIONAL: ACT 1 cylce -> PREf tRP -> FRAC (Back in closed state again)
+          // OLD PuM timings
+          /// ROWCLONE:   ACTp tRAS -> PREv 3ns -> ACTv tRP-> RC 
+          /// MAJORITY:   ACTp 1.5ns -> PREj 3ns -> ACTv tRP -> MAJ 
+          /// FRACTIONAL: ACTp 1 cylce -> PREf tRP -> FRAC 
+          */
+
+          // PuM timings
+          /// ROWCLONE:   ACTp tRAS -> PREv 3ns -> RC tRP 
+          /// MAJORITY:   ACTp 1.5ns -> PREj 3ns -> MAJ tRP 
+          /// FRACTIONAL: ACTp 1 cylce -> FRAC tRP
           
           // Rowclone Command timings
           {.level = "bank", .preceding = {"ACTp"}, .following = {"PREv"}, .latency = V("nRAS")},
-          {.level = "bank", .preceding = {"PREv"}, .following = {"ACTv"}, .latency = 6},
-          {.level = "bank", .preceding = {"ACTv"}, .following = {"RC"}, .latency = V("nRP")},
-          
+          {.level = "bank", .preceding = {"PREv"}, .following = {"RC"}, .latency = 6},
+
           // MAJORITY Command timings
           {.level = "bank", .preceding = {"ACTp"}, .following = {"PREj"}, .latency = 3},
-          {.level = "bank", .preceding = {"PREj"}, .following = {"ACTv"}, .latency = 6},
-          {.level = "bank", .preceding = {"ACTv"}, .following = {"MAJ"}, .latency = V("nRP")},
+          {.level = "bank", .preceding = {"PREj"}, .following = {"MAJ"}, .latency = 6},
 
           // FRAC Command timings
-          {.level = "bank", .preceding = {"ACTp"}, .following = {"PREf"}, .latency = 1},
-          {.level = "bank", .preceding = {"PREf"}, .following = {"FRAC"}, .latency = V("nRP")},
+          {.level = "bank", .preceding = {"ACTp"}, .following = {"FRAC"}, .latency = 1},
+          {.level = "bank", .preceding = {"MAJ", "RC", "FRAC"}, .following = {"ACT", "ACTp"}, .latency = V("nRP")},
         }
       );
       #undef V
@@ -651,10 +645,8 @@ class DDR4 : public IDRAM, public Implementation {
       m_actions[m_levels["bank"]][m_commands["MAJ"]]  = Lambdas::Action::Bank::MAJ<DDR4>;
       m_actions[m_levels["bank"]][m_commands["RC"]]   = Lambdas::Action::Bank::RC<DDR4>;
       m_actions[m_levels["bank"]][m_commands["ACTp"]] = Lambdas::Action::Bank::ACTp<DDR4>;
-      m_actions[m_levels["bank"]][m_commands["ACTv"]] = Lambdas::Action::Bank::ACTv<DDR4>;
       m_actions[m_levels["bank"]][m_commands["PREv"]] = Lambdas::Action::Bank::PREv<DDR4>;
       m_actions[m_levels["bank"]][m_commands["PREj"]] = Lambdas::Action::Bank::PREj<DDR4>;
-      m_actions[m_levels["bank"]][m_commands["PREf"]] = Lambdas::Action::Bank::PREf<DDR4>;
     };
 
     void set_preqs() {
